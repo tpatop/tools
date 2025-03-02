@@ -2,60 +2,89 @@ import requests
 import re
 import pyfiglet
 from colorama import Fore, Style, init
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Инициализация colorama для поддержки цветов в консоли
 init(autoreset=True)
 
-# Выводим ASCII-арт заголовок с желтым цветом
-ascii_art = pyfiglet.figlet_format("PROXY CHECKER")
-by_text = "By https://t.me/reddragonnodes"
-print(f"\n{Fore.YELLOW}{ascii_art}{by_text.center(80)}\n")
+def print_banner():
+    """Выводим ASCII-арт заголовок с желтым цветом."""
+    ascii_art = pyfiglet.figlet_format("PROXY CHECKER")
+    by_text = "By https://t.me/reddragonnodes"
+    print(f"\n{Fore.YELLOW}{ascii_art}{by_text.center(80)}\n")
 
-# Файл с исходными прокси
-proxy_file = "proxies.txt"
-test_url = "http://httpbin.org/ip"
-
-# Загружаем прокси из файла
-with open(proxy_file) as f:
-    proxies_list = f.read().splitlines()
-
-working_proxies = []
-working_proxies_auth = []
-dead_proxies = []
+def load_proxies(file_path):
+    """Загружает прокси из файла."""
+    with open(file_path) as f:
+        return f.read().splitlines()
 
 def clean_proxy(proxy):
     """Удаляет протокол из прокси, если он есть."""
     return re.sub(r'^(http://|https://)', '', proxy, flags=re.IGNORECASE)
 
-cleaned_proxies = list(map(clean_proxy, proxies_list))
-
-for proxy in cleaned_proxies:
+def check_proxy(proxy, test_url):
+    """Проверяет работоспособность прокси."""
     http_proxy = f"http://{proxy}"
     proxies_http = {"http": http_proxy, "https": http_proxy}
     
     try:
         response = requests.get(test_url, proxies=proxies_http, timeout=5, verify=False)
         if response.status_code == 200:
-            working_proxies.append(http_proxy)  # Записываем с одним протоколом
-            working_proxies_auth.append(proxy)  # Записываем без протокола
-            print(f"{Fore.GREEN}✅ Рабочий: {proxy} | Ответ: {response.text.strip()}")
+            print(f"{Fore.GREEN}✅✅✅ {proxy}")
+            return proxy, http_proxy, True
         else:
-            dead_proxies.append(proxy)
-            print(f"{Fore.RED}❌ Не отвечает: {proxy}")
+            print(f"{Fore.RED}❓❓❓ {proxy}")
+            return proxy, None, False
     except requests.RequestException:
-        dead_proxies.append(proxy)
-        print(f"{Fore.RED}❌ Ошибка: {proxy}")
+        print(f"{Fore.RED}❌❌❌ {proxy}")
+        return proxy, None, False
 
-# Сохраняем рабочие прокси в формате логин:пароль@адрес:порт
-with open("working_proxies_auth_format.txt", "w") as f:
-    f.write("\n".join(working_proxies_auth))
+def save_proxies(file_path, proxies):
+    """Сохраняет список прокси в файл."""
+    with open(file_path, "w") as f:
+        f.write("\n".join(proxies))
 
-# Сохраняем рабочие прокси в формате http://логин:пароль@адрес:порт
-with open("working_proxies_http_format.txt", "w") as f:
-    f.write("\n".join(working_proxies))
+def main():
+    # Основные параметры
+    proxy_file = "working_proxies.txt"
+    test_url = "http://httpbin.org/ip"
+    output_files = {
+        "auth": "working_proxies_auth_format.txt",
+        "http": "working_proxies_http_format.txt",
+        "dead": "dead_proxies.txt",
+    }
 
-# Сохраняем нерабочие прокси
-with open("dead_proxies.txt", "w") as f:
-    f.write("\n".join(dead_proxies))
+    # Выводим баннер
+    print_banner()
 
-print(f"\n{Fore.YELLOW}Готово! Найдено {len(working_proxies)} рабочих прокси, {len(dead_proxies)} нерабочих.")
+    # Загружаем прокси
+    proxies_list = load_proxies(proxy_file)
+    cleaned_proxies = list(map(clean_proxy, proxies_list))
+
+    # Списки для хранения результатов
+    working_proxies = []
+    working_proxies_auth = []
+    dead_proxies = []
+
+    # Проверяем прокси в многопоточном режиме
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        futures = [executor.submit(check_proxy, proxy, test_url) for proxy in cleaned_proxies]
+        
+        for future in as_completed(futures):
+            proxy, http_proxy, is_working = future.result()
+            if is_working:
+                working_proxies_auth.append(proxy)
+                working_proxies.append(http_proxy)
+            else:
+                dead_proxies.append(proxy)
+
+    # Сохраняем результаты
+    save_proxies(output_files["auth"], working_proxies_auth)
+    save_proxies(output_files["http"], working_proxies)
+    save_proxies(output_files["dead"], dead_proxies)
+
+    # Выводим итоговый отчет
+    print(f"\n{Fore.YELLOW}Готово! Найдено {len(working_proxies)} рабочих прокси, {len(dead_proxies)} нерабочих.")
+
+if __name__ == "__main__":
+    main()
